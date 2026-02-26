@@ -1044,8 +1044,9 @@ export class TaskOrchestrator {
 
   private async cleanup() {
     this.cleaningUp = true;
-    this.forkedProcessTaskRunner.cleanup();
+    const forkedCleanup = this.forkedProcessTaskRunner.cleanup();
     await Promise.all([
+      forkedCleanup,
       ...Array.from(this.runningContinuousTasks).map(async ([taskId, t]) => {
         try {
           await t.kill();
