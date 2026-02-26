@@ -409,10 +409,8 @@ export class ForkedProcessTaskRunner {
     writeFileSync(outputPath, content);
   }
 
-  cleanup(signal?: NodeJS.Signals) {
-    this.processes.forEach((p) => {
-      p.kill(signal);
-    });
+  async cleanup(signal?: NodeJS.Signals) {
+    await Promise.all([...this.processes].map((p) => p.kill(signal)));
     this.cleanUpBatchProcesses();
   }
 
@@ -432,16 +430,21 @@ export class ForkedProcessTaskRunner {
     // When the nx process gets a message, it will be sent into the task's process
     process.on('message', messageHandler);
 
-    // Terminate any task processes on exit
+    // Terminate any task processes on exit (sync, last resort).
+    // cleanup() is async but the initial signal dispatch is synchronous
+    // (killProcessTreeGraceful snapshots and signals before the async
+    // grace period). The grace period won't complete here, but each
+    // child also has its own sync exit handler as a final fallback.
     process.once('exit', () => {
       this.cleanup();
       process.off('message', messageHandler);
     });
     process.once('SIGINT', () => {
-      this.cleanup('SIGTERM');
-      process.off('message', messageHandler);
-      // we exit here because we don't need to write anything to cache.
-      process.exit(signalToCode('SIGINT'));
+      this.cleanup('SIGTERM').finally(() => {
+        process.off('message', messageHandler);
+        // we exit here because we don't need to write anything to cache.
+        process.exit(signalToCode('SIGINT'));
+      });
     });
     process.once('SIGTERM', () => {
       this.cleanup('SIGTERM');

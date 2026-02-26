@@ -3,7 +3,7 @@ import { ChildProcess, exec, Serializable } from 'child_process';
 import { env as appendLocalEnv } from 'npm-run-path';
 import { isAbsolute, join } from 'path';
 import { ExecutorContext } from '../../config/misc-interfaces';
-import { killProcessTree } from '../../native';
+import { killProcessTree, killProcessTreeGraceful } from '../../native';
 import {
   createPseudoTerminal,
   PseudoTerminal,
@@ -77,10 +77,8 @@ export class ParallelRunningTasks implements RunningTask {
     }
   }
 
-  kill(signal?: NodeJS.Signals): void {
-    for (const p of this.childProcesses) {
-      p.kill(signal);
-    }
+  async kill(signal?: NodeJS.Signals): Promise<void> {
+    await Promise.all(this.childProcesses.map((p) => p.kill(signal)));
   }
 
   private async run() {
@@ -405,10 +403,11 @@ class RunningNodeProcess implements RunningTask {
     this.childProcess.send(message);
   }
 
-  kill(signal?: NodeJS.Signals): void {
+  kill(signal?: NodeJS.Signals): Promise<void> {
     if (this.childProcess.pid) {
-      killProcessTree(this.childProcess.pid, signal);
+      return killProcessTreeGraceful(this.childProcess.pid, signal);
     }
+    return Promise.resolve();
   }
 
   private triggerOutputListeners(output: string) {
@@ -474,24 +473,24 @@ class RunningNodeProcess implements RunningTask {
         }
       }
     });
-    // Terminate any task processes on exit
+    // Terminate any task processes on exit (sync, last resort)
     process.on('exit', () => {
-      this.kill();
+      if (this.childProcess.pid) {
+        killProcessTree(this.childProcess.pid);
+      }
     });
+    // Per-child signal handlers only kill their own child process.
+    // They do NOT call process.exit() — that's handled by the parent-level
+    // registerProcessListener to avoid a race where the first child to
+    // finish shutdown exits the parent before others complete.
     process.on('SIGINT', () => {
       this.kill('SIGTERM');
-      // we exit here because we don't need to write anything to cache.
-      process.exit(signalToCode('SIGINT'));
     });
     process.on('SIGTERM', () => {
       this.kill('SIGTERM');
-      // no exit here because we expect child processes to terminate which
-      // will store results to the cache and will terminate this process
     });
     process.on('SIGHUP', () => {
       this.kill('SIGTERM');
-      // no exit here because we expect child processes to terminate which
-      // will store results to the cache and will terminate this process
     });
   }
 }
@@ -656,14 +655,29 @@ function registerProcessListener(
     }
   });
 
-  // Terminate any task processes on exit
+  // Terminate any task processes on exit (sync, last resort).
+  // The per-child exit handlers and PseudoTerminal.shutdown() use the
+  // sync killProcessTree for this path. We call kill() here as a
+  // best-effort fallback — it returns a Promise but on 'exit' only
+  // synchronous work runs, so the initial signal is sent but the
+  // grace period won't be awaited. That's acceptable: 'exit' is the
+  // last resort after SIGINT/SIGTERM handlers have already had their
+  // chance to do graceful shutdown.
   process.on('exit', () => {
     runningTask.kill();
   });
   process.on('SIGINT', () => {
-    runningTask.kill('SIGTERM');
-    // we exit here because we don't need to write anything to cache.
-    process.exit(signalToCode('SIGINT'));
+    // Gracefully kill then exit. Keeping this process alive during the
+    // grace period prevents the PTY master from closing prematurely,
+    // which would send SIGHUP to children before they finish cleanup.
+    const result = runningTask.kill('SIGTERM');
+    if (result && typeof result.then === 'function') {
+      result.finally(() => {
+        process.exit(signalToCode('SIGINT'));
+      });
+    } else {
+      process.exit(signalToCode('SIGINT'));
+    }
   });
   process.on('SIGTERM', () => {
     runningTask.kill('SIGTERM');
