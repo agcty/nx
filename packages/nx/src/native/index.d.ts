@@ -327,8 +327,11 @@ export declare export declare function isAiAgent(): boolean
 
 export declare export declare function isEditorInstalled(editor: SupportedEditor): boolean
 
-/** Kill a process and all its descendants. */
+/** Kill a process and all its descendants (fire-and-forget). */
 export declare export declare function killProcessTree(rootPid: number, signal?: string | undefined | null): void
+
+/** Kill a process tree gracefully: signal → wait → SIGKILL. */
+export declare export declare function killProcessTreeGraceful(rootPid: number, signal?: string | undefined | null, gracePeriodMs?: number | undefined | null): Promise<void>
 
 export declare export declare function logDebug(message: string): void
 
