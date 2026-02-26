@@ -327,10 +327,28 @@ export declare export declare function isAiAgent(): boolean
 
 export declare export declare function isEditorInstalled(editor: SupportedEditor): boolean
 
-/** Kill a process and all its descendants (fire-and-forget). */
+/**
+ * Kill a process and all its descendants (fire-and-forget).
+ *
+ * Sends the requested signal to all processes in the tree but does NOT
+ * wait for them to exit. Use `killProcessTreeGraceful` when you need
+ * to ensure cleanup handlers run before force-killing.
+ *
+ * This is a best-effort operation that never fails or panics.
+ * Processes that have already exited or can't be signaled are silently skipped.
+ */
 export declare export declare function killProcessTree(rootPid: number, signal?: string | undefined | null): void
 
-/** Kill a process tree gracefully: signal → wait → SIGKILL. */
+/**
+ * Kill a process tree gracefully: signal → wait → SIGKILL.
+ *
+ * 1. Sends the requested signal (default SIGTERM) to all descendants
+ * 2. Polls every 100ms, waiting up to `grace_period_ms` (default 5000) for exit
+ * 3. Force-kills any survivors with SIGKILL
+ *
+ * Returns a Promise (runs on a background thread via tokio so it doesn't
+ * block the Node.js event loop).
+ */
 export declare export declare function killProcessTreeGraceful(rootPid: number, signal?: string | undefined | null, gracePeriodMs?: number | undefined | null): Promise<void>
 
 export declare export declare function logDebug(message: string): void
