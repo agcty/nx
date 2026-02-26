@@ -409,10 +409,8 @@ export class ForkedProcessTaskRunner {
     writeFileSync(outputPath, content);
   }
 
-  cleanup(signal?: NodeJS.Signals) {
-    this.processes.forEach((p) => {
-      p.kill(signal);
-    });
+  async cleanup(signal?: NodeJS.Signals) {
+    await Promise.all([...this.processes].map((p) => p.kill(signal)));
     this.cleanUpBatchProcesses();
   }
 
@@ -438,10 +436,11 @@ export class ForkedProcessTaskRunner {
       process.off('message', messageHandler);
     });
     process.once('SIGINT', () => {
-      this.cleanup('SIGTERM');
-      process.off('message', messageHandler);
-      // we exit here because we don't need to write anything to cache.
-      process.exit(signalToCode('SIGINT'));
+      this.cleanup('SIGTERM').finally(() => {
+        process.off('message', messageHandler);
+        // we exit here because we don't need to write anything to cache.
+        process.exit(signalToCode('SIGINT'));
+      });
     });
     process.once('SIGTERM', () => {
       this.cleanup('SIGTERM');
